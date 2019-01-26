@@ -28,8 +28,6 @@ evening_inbound = Counter()
 rd.extract_trips(TRIPS_CSV_PATH, trips)
 rd.extract_stations(STATIONS_CSV_PATH, stations)
 
-# rd.plot_trips(trips)
-
 rd.count_trips_per_station(trips, morning_outbound, morning_inbound,
                            start_morning_window, end_morning_window)
 
