@@ -17,6 +17,19 @@ def extract_trips(csv_path, trip_list):
     #print(trip_list)
 
 
+def extract_stations(csv_path, station_list):
+    count = 0
+    # Extract trips from csv, put them in an OrderedDict with proper field names
+    with open(csv_path, newline='') as tripdata_csv:
+        reader = csv.DictReader(tripdata_csv, delimiter=',', quotechar='|')
+        for row in reader:
+            count += 1
+            #print(row)
+            station_list.append(row)
+            if count % 10000 == 0:
+                print(f'Seen {count!s} rows')
+
+
 def plot_trips(trip_list):
     start_lats = [float(trip['start_lat']) for trip in trip_list]
     start_lons = [float(trip['start_lon']) for trip in trip_list]
@@ -67,3 +80,5 @@ def is_time_between(begin_time, end_time, check_time):
         return begin_time <= check_time <= end_time
     else:  # crosses midnight
         return check_time >= begin_time or check_time <= end_time
+
+
