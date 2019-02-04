@@ -1,4 +1,7 @@
-import csv, matplotlib.pyplot as plt, numpy as np
+import csv,\
+        matplotlib.pyplot as plt, \
+        numpy as np, \
+        time
 from datetime import datetime as dt
 
 
@@ -63,15 +66,39 @@ def plot_trips(trip_list):
 
 
 def count_trips_per_station(trips, outbound_station_counter, inbound_station_counter,
-                            start_time_window=None, end_time_window=None):
+                            start_time_window=None, end_time_window=None, weekdays_only=False):
+    timer_begin = time.time()
     has_window = start_time_window and end_time_window
     for trip in trips:
-        trip_start_time = dt.strptime(trip['start_time'], '%m/%d/%Y %H:%M').time()
-        if not has_window or is_time_between(start_time_window, end_time_window, trip_start_time):
+        trip_start = dt.strptime(trip['start_time'], '%m/%d/%Y %H:%M')
+        trip_start_time = trip_start.time()
+        is_weekday = trip_start.isoweekday() < 6
+        if (not has_window or is_time_between(start_time_window, end_time_window, trip_start_time))\
+                and (not weekdays_only or is_weekday):
             # If no window provided, always count the trip
             # If window provided, only count the trip if the start_time is in the window
             outbound_station_counter.update({trip['start_station'] : 1})
             inbound_station_counter.update({trip['end_station'] : 1})
+    print('CTPS_Counter elapsed time:    ', str(time.time() - timer_begin))
+
+
+def count_trips_per_station_defaultdict(trips, outbound_station_counter, inbound_station_counter,
+                            start_time_window=None, end_time_window=None, weekdays_only=False):
+    timer_begin = time.time()
+    has_window = start_time_window and end_time_window
+    for trip in trips:
+        trip_start = dt.strptime(trip['start_time'], '%m/%d/%Y %H:%M')
+        trip_start_time = trip_start.time()
+        is_weekday = trip_start.isoweekday() < 6
+        if (not has_window or is_time_between(start_time_window, end_time_window, trip_start_time))\
+                and (not weekdays_only or is_weekday):
+            # If no window provided, always count the trip
+            # If window provided, only count the trip if the start_time is in the window
+            outbound_station_counter[trip['start_station']] += 1
+            inbound_station_counter[trip['end_station']] += 1
+            sorted(outbound_station_counter.items())
+            sorted(inbound_station_counter.items())
+    print('CTPS_DefaultDict elapsed time: ', str(time.time() - timer_begin))
 
 
 # Adapted from post by Joe Halloway on Stack Overflow: https://stackoverflow.com/a/10048290
@@ -82,3 +109,24 @@ def is_time_between(begin_time, end_time, check_time):
         return check_time >= begin_time or check_time <= end_time
 
 
+def plot_station_counts(station_counts):
+    plt.figure(figsize=(12, 6))
+    plt.subplot(121)
+    plt.scatter([station['morning_out'] for station in station_counts],
+                [station['morning_in'] for station in station_counts])
+    plt.xlabel('Morning Outbound Trips')
+    plt.ylabel('Morning Inbound Trips')
+    plt.axis('equal')
+    plt.axis([0, 3000, 0, 3500])
+    # plt.annotate()
+
+    plt.subplot(122)
+    plt.scatter([station['evening_out'] for station in station_counts],
+                [station['evening_in'] for station in station_counts])
+    plt.xlabel('Evening Outbound Trips')
+    plt.ylabel('Evening Inbound Trips')
+    plt.axis('equal')
+    plt.axis([0, 3000, 0, 3500])
+
+    # plt.axis([0, 3000, 0, 3000])
+    plt.show()
