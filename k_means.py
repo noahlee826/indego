@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 # data: list of (x, y) points
 def k_means(data, k):
     zd = list(zip(*data))
-    low = min(min(zd[0]), min(zd[1]))
-    high = max(max(zd[0]), max(zd[1]))
+    low = int(min(min(zd[0]), min(zd[1])))
+    high = int(max(max(zd[0]), max(zd[1]))) + 1
     means = []
     for i in range(k):
         means.append((random.randint(low, high), random.randint(low, high)))
@@ -47,7 +47,10 @@ def k_means(data, k):
 
     print("data:")
     print(data)
-    colors = np.random.rand(k, 3)
+    basic_colors = ['r', 'g', 'b', 'c', 'm', 'y']
+    colors = basic_colors
+    if k > len(basic_colors):
+        colors = np.random.rand(k, 3)
     data_xs = list(zip(*data))[0]
     data_ys = list(zip(*data))[1]
     data_color = [colors[label] for label in labels]
@@ -65,11 +68,6 @@ def k_means(data, k):
     return labels
 
 
-# similar to k_means except the "means" are points in the data set
-# this is why it is called k medians
-# def k_medoids(data,k):
-# fill in
-
 def generate_data(n, low, high):
     points = []
     for i in range(n):
@@ -80,16 +78,18 @@ def generate_data(n, low, high):
 
 
 # Plots k_means(data, k) for each k such that max_k >= k >= 1
-def k_means_multiplot(data, max_k):
+def k_means_multiplot(data, max_k, xlabel='', ylabel=''):
     if max_k < 1:
         return
-    max_fig_width = 18 # magic number
+    max_fig_width = 15  # magic number
     subplot_width = max_fig_width / (max_k)
     subplot_height = subplot_width
     plt.figure(figsize=(max_fig_width, subplot_height))
     for k in range(1, max_k + 1):
         plt.subplot(1, max_k, k)
         plt.axis('equal')
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
         k_means(data, k)
     plt.show()
 
