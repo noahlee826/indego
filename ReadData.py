@@ -1,10 +1,18 @@
-import csv,\
-        matplotlib.pyplot as plt, \
-        numpy as np, \
-        time
+import copy
+import csv
 import datetime as dt
-from collections import defaultdict
+import matplotlib.pyplot as plt
+import numpy as np
+import time
+from collections import OrderedDict
 from itertools import cycle
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import NearestNeighbors
+from sklearn.cluster import KMeans
+from sklearn.cluster import DBSCAN
+from sklearn.decomposition import PCA
+from math import sqrt
+from scipy.spatial.distance import cdist
 
 
 def extract_trips(csv_path, trip_list):
@@ -142,35 +150,139 @@ def plot_station_counts(station_counts):
     plt.show()
 
 
-def count_bucketed_trips(trips, resolution=60):
+def count_bucketed_trips(trips, resolution=60, ok_days=None, station_id=None):
+    if ok_days is None:
+        ok_days = [1, 2, 3, 4, 5, 6, 7]
+
     zero_time = dt.datetime(1970, 1, 1, 0, 0, 0)
     num_buckets = int(1440 / resolution)
     if 1440 % resolution != 0:
         num_buckets += 1
     bucket_times = [zero_time + dt.timedelta(minutes=resolution * x) for x in range(num_buckets)]
     bucket_texts = [t.strftime('%H:%M') for t in bucket_times]
-    start_hourly_counts = defaultdict(int)
-    end_hourly_counts = defaultdict(int)
+    start_hourly_counts = {k: 0 for k in bucket_texts}  #  defaultdict(int, bucket_texts)
+    end_hourly_counts = {k: 0 for k in bucket_texts} #  defaultdict(int)
+    total_hourly_counts = {k: 0 for k in bucket_texts}
     # bucket_size = 1440 / float(num_buckets)
 
     for trip in trips:
-        trip_start = dt.datetime.strptime(trip['start_time'], '%m/%d/%Y %H:%M')
-        # trip_start_time = trip_start.time()
-        start_minute = minute_of_day(trip_start)
-        bucket_number = int(start_minute / resolution)
-        # bucket_minute = bucket_number * bucket_size
-        start_hourly_counts[bucket_texts[bucket_number]] += 1
+            trip_start = dt.datetime.strptime(trip['start_time'], '%m/%d/%Y %H:%M')
+            is_in_days_window = trip_start.isoweekday() in ok_days
 
-        trip_end = dt.datetime.strptime(trip['end_time'], '%m/%d/%Y %H:%M')
-        # trip_end_time = trip_end.time()
-        end_minute = minute_of_day(trip_end)
-        bucket_number = int(end_minute / resolution)
-        end_hourly_counts[bucket_texts[bucket_number]] += 1
+            if is_in_days_window:
+                start_minute = minute_of_day(trip_start)
+                bucket_number = int(start_minute / resolution)
+                start_hourly_counts[bucket_texts[bucket_number]] += 1
+                total_hourly_counts[bucket_texts[bucket_number]] += 1
+
+                trip_end = dt.datetime.strptime(trip['end_time'], '%m/%d/%Y %H:%M')
+                end_minute = minute_of_day(trip_end)
+                bucket_number = int(end_minute / resolution)
+                end_hourly_counts[bucket_texts[bucket_number]] += 1
+                total_hourly_counts[bucket_texts[bucket_number]] += 1
+
+    start_sum = sum(start_hourly_counts.values())
+    end_sum = sum(end_hourly_counts.values())
+    total_sum = sum(total_hourly_counts.values())
+
+    for bucket in start_hourly_counts:
+        count = start_hourly_counts[bucket]
+        start_hourly_counts[bucket] = (count, count / start_sum)
+    for bucket in end_hourly_counts:
+        count = end_hourly_counts[bucket]
+        end_hourly_counts[bucket] = (count, count / end_sum)
+    for bucket in total_hourly_counts:
+        count = total_hourly_counts[bucket]
+        total_hourly_counts[bucket] = (count, count / total_sum)
+
+    # Sort the dicts
+    start_hourly_counts = OrderedDict(sorted(start_hourly_counts.items()))
+    end_hourly_counts = OrderedDict(sorted(end_hourly_counts.items()))
+    total_hourly_counts = OrderedDict(sorted(total_hourly_counts.items()))
+
+    return start_hourly_counts, end_hourly_counts, total_hourly_counts
+
+
+# Returns dict of {station_id: (start_hourly_counts, end_hourly_counts, total_hourly_counts)}
+def count_bucketed_trips_by_station(trips, stations, resolution=60, ok_days=None):
+    if ok_days is None:
+        ok_days = [1, 2, 3, 4, 5, 6, 7]
+
+
+    zero_time = dt.datetime(1970, 1, 1, 0, 0, 0)
+    num_buckets = int(1440 / resolution)
+
+    if 1440 % resolution != 0:
+        num_buckets += 1
+    bucket_times = [zero_time + dt.timedelta(minutes=resolution * x) for x in range(num_buckets)]
+    bucket_texts = [t.strftime('%H:%M') for t in bucket_times]
+    start_hourly_counts = {k: 0 for k in bucket_texts}  #  defaultdict(int, bucket_texts)
+    end_hourly_counts = {k: 0 for k in bucket_texts} #  defaultdict(int)
+    total_hourly_counts = {k: 0 for k in bucket_texts}
+    # bucket_size = 1440 / float(num_buckets)
+
+    counts_by_station = {station['Station ID']: [copy.deepcopy(start_hourly_counts),
+                                                 copy.deepcopy(end_hourly_counts),
+                                                 copy.deepcopy(total_hourly_counts)] for station in stations}
+
+    # Poor man's enum
+    START =0
+    END = 1
+    TOTAL = 2
+
+    for trip in trips:
+        trip_start = dt.datetime.strptime(trip['start_time'], '%m/%d/%Y %H:%M')
+        is_in_days_window = trip_start.isoweekday() in ok_days
+
+        if is_in_days_window:
+            # Start of trip
+            start_minute = minute_of_day(trip_start)
+            bucket_number = int(start_minute / resolution)
+            stn_id = trip['start_station']
+            bkt_id = bucket_texts[bucket_number]
+
+            counts_by_station[stn_id][START][bkt_id] += 1
+            counts_by_station[stn_id][TOTAL][bkt_id] += 1
+
+            # End of trip
+            trip_end = dt.datetime.strptime(trip['end_time'], '%m/%d/%Y %H:%M')
+            end_minute = minute_of_day(trip_end)
+            bucket_number = int(end_minute / resolution)
+            stn_id = trip['end_station']
+            bkt_id = bucket_texts[bucket_number]
+
+            counts_by_station[stn_id][END][bkt_id] += 1
+            counts_by_station[stn_id][TOTAL][bkt_id] += 1
+
+    for stn_id, counts_list in counts_by_station.items():
+        starts = counts_list[START]
+        ends = counts_list[END]
+        totals = counts_list[TOTAL]
+        start_sum = sum(starts.values())
+        end_sum = sum(ends.values())
+        total_sum = sum(totals.values())
+        # print(stn_id, starts)
+
+        for bucket in starts:
+            absolute = starts[bucket]
+            # print('abs', str(absolute), 'sum', str(start_sum))
+            relative = absolute / start_sum if start_sum > 0 else 0
+            starts[bucket] = (absolute, relative)
+        for bucket in ends:
+            absolute = ends[bucket]
+            relative = absolute / end_sum if end_sum > 0 else 0
+            ends[bucket] = (absolute, relative)
+        for bucket in totals:
+            absolute = totals[bucket]
+            relative = absolute / total_sum if total_sum > 0 else 0
+            totals[bucket] = (absolute, relative)
 
         # Sort the dicts
-        start_hourly_counts = defaultdict(int, sorted(start_hourly_counts.items()))
-        end_hourly_counts = defaultdict(int, sorted(end_hourly_counts.items()))
-    return start_hourly_counts, end_hourly_counts
+        starts = OrderedDict(sorted(start_hourly_counts.items()))
+        ends = OrderedDict(sorted(end_hourly_counts.items()))
+        totals = OrderedDict(sorted(total_hourly_counts.items()))
+
+    return counts_by_station
 
 
 # Returns an int representing the the minute of the day this timestamp occurs in
@@ -181,21 +293,165 @@ def minute_of_day(timestamp):
     return timestamp.time().hour * 60 + timestamp.time().minute
 
 
-def plot_bucketed_count(bucketed_count):
-    xs = [x for x in range(len(bucketed_count))]
-    ws = [0.3] * len(bucketed_count)
-    # print(f'DD of {len(bucketed_count)!s} buckets')
-    print(bucketed_count)
-    print(sorted(bucketed_count.items()))
-    heights = [count for bucket, count in sorted(bucketed_count.items())]
-    print(f'List of {len(heights)!s} heights')
-    colors = np.random.rand(len(bucketed_count), 3)
-    color_cycle = cycle(['#2D728F'] * 4 + ['#3B8EA5'] * 4)
-    colors = [next(color_cycle) for _ in range(len(bucketed_count))]
-    plt.bar(xs, heights, width=0.8, color=colors, align='edge')
-    labels = bucketed_count.keys()
-    plt.xticks(xs, bucketed_count.keys(), rotation=45)
+def plot_bucketed_count(bucketed_count, use_relative_count=False, group_n=4):
 
+    xs = [x for x in range(len(bucketed_count))]
+    # ws = [0.3] * len(bucketed_count)
+    # print(f'DD of {len(bucketed_count)!s} buckets')
+    # print(bucketed_count)
+    # print(sorted(bucketed_count.items()))
+
+    if use_relative_count:
+        heights = [relative for _, (absolute, relative) in bucketed_count.items()]
+    else:
+        # print(bucketed_count.items())
+        heights = [absolute for _, (absolute, relative) in bucketed_count.items()]
+
+    # print(f'List of {len(heights)!s} heights')
+    if group_n > 0:
+        color_cycle = cycle(['#2D728F'] * group_n + ['#3B8EA5'] * group_n)  # Slightly different shades of blue
+        colors = [next(color_cycle) for _ in range(len(bucketed_count))]
+    else:
+        colors = ['#2D728F'] * len(bucketed_count)
+
+    plt.bar(xs, heights, width=0.8, color=colors, align='edge')
+    plt.xticks(xs, bucketed_count.keys(), rotation=45)  # Uses bucket keys as tick labels
+
+    # Only show every group_nth label
     for idx, label in enumerate(plt.gca().xaxis.get_ticklabels()):
-        if idx % 4 != 0:
+        if group_n < 1 or idx % group_n != 0:
             label.set_visible(False)
+
+
+def mse(A, B):
+    return np.mean((B - A) ** 2)
+
+def pca_dim_reduction(data, n_components=2):
+    pca = PCA(n_components=n_components)
+    scaled_data = StandardScaler().fit_transform(data)
+    projected = pca.fit_transform(scaled_data)
+    plt.scatter(projected[:, 0], projected[:, 1],
+                alpha=0.5,
+                cmap=plt.cm.get_cmap('tab10', 10))
+
+    plt.xlabel('component 1')
+    plt.ylabel('component 2')
+    plt.show()
+
+
+def cluster_dbscan(data):
+    # Based on https://scikit-learn.org/stable/auto_examples/cluster/plot_dbscan.html by scikit-learn developers
+    print('len of data =', len(data))
+    scaled_data = StandardScaler().fit_transform(data)
+    n_samples = scaled_data.shape[0]
+    print('len of scaled_data =', len(scaled_data))
+
+    ### Don't need to do this on scaled data. Only do it on PCA projected data, see below
+    # k means clustering w/ elbow plot to determine K
+    # K = range(1, n_samples - 1, 10)
+    # distortions = []
+    # for k in K:
+    #     kmeanModel = KMeans(n_clusters=k).fit(scaled_data)
+    #     kmeanModel.fit(scaled_data)
+    #
+    #     distortions.append(sum(np.min(cdist(scaled_data, kmeanModel.cluster_centers_, 'euclidean'), axis=1)) / n_samples)
+    #
+    # for k, d in (zip(K, distortions)):
+    #     print(k, d)
+    # # Plot the elbow
+    # plt.plot(K, distortions, 'bx-')
+    # plt.xlabel('k')
+    # plt.ylabel('Distortion')
+    # plt.title('The Elbow Method showing the optimal k for scaled_data')
+    # plt.show()
+
+
+    ###
+    pca = PCA(n_components=2)
+    projected_data = pca.fit_transform(scaled_data)
+
+    ###
+    # k means clustering w/ elbow plot to determine k for projected_data
+    K = range(1, 15)
+    distortions = []
+    for k in K:
+        kmeanModel = KMeans(n_clusters=k).fit(projected_data)
+        kmeanModel.fit(projected_data)
+
+        distortions.append(sum(np.min(cdist(projected_data, kmeanModel.cluster_centers_, 'euclidean'), axis=1)) / n_samples)
+
+
+    # Plot the elbow
+    plt.plot(K, distortions, 'bx-')
+    plt.xlabel('k')
+    plt.ylabel('Distortion')
+    plt.title('The Elbow Method showing the optimal k for projected_data')
+    plt.show()
+    # Visual inspection shows best elbow at k=4, eps = 1.07
+
+    test_eps = distortions
+    target_k = 12
+    target_eps = test_eps[target_k - 1]
+
+    plt.figure(figsize=(10, 10))
+    n_rows = int(sqrt(len(test_eps))) + 1
+    n_cols = int(sqrt(len(test_eps))) + 1
+    n_subplots = n_rows * n_cols
+
+    ###
+    # Use this for loop to display DBSCAN with a range of eps values
+    # target_labels = []
+    # for i, eps in enumerate(test_eps):
+    #     plt.subplot(n_rows, n_cols, i + 1)
+    #     clustered = DBSCAN(eps=eps, min_samples=4).fit(projected_data)
+    #     labels = clustered.labels_
+    #     if i + 1 == target_k:
+    #         target_labels = labels
+    #     # Number of clusters in labels, ignoring noise if present.
+    #     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    #     n_outliers = sum([(1 if label == -1 else 0) for label in labels])
+    #     # Black removed and is used for noise instead.
+    #     unique_labels = set(labels)
+    #     unique_colors = [plt.cm.get_cmap('viridis')(each) for each in np.linspace(0, 1, n_clusters)]
+    #     unique_colors.append((0, 0, 0, 1)) # Black is the last color, for label -1
+    #
+    #     colors = [unique_colors[label] for label in labels]
+    #     # print(f'Found {len(labels)!s} labels')
+    #
+    #     plt.scatter(projected_data[:, 0], projected_data[:, 1],
+    #                 c=colors, alpha=0.5)
+    #
+    #     plt.xlabel('component 1')
+    #     plt.ylabel('component 2')
+    #     plt.title(f'eps={round(eps, 2)!s}, clu={n_clusters!s}, out={n_outliers!s}')
+    # plt.tight_layout(pad=2)
+
+    ###
+    # Display DBSCAN with only one eps value
+    # print('len of projected_data =', len(projected_data))
+    clustered = DBSCAN(eps=target_eps, min_samples=4).fit(projected_data)
+    labels = clustered.labels_
+    target_labels = labels
+    print('chksum target_labels =', sum(target_labels), 'len =', len(target_labels))
+    # Number of clusters in labels, ignoring noise if present.
+    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    n_outliers = sum([(1 if label == -1 else 0) for label in labels])
+    # Black removed and is used for noise instead.
+    unique_labels = set(labels)
+    unique_colors = [plt.cm.get_cmap('viridis')(each) for each in np.linspace(0, 1, n_clusters)]
+    unique_colors.append((0, 0, 0, 1)) # Black is the last color, for label -1
+
+    colors = [unique_colors[label] for label in labels]
+
+    plt.scatter(projected_data[:, 0], projected_data[:, 1],
+                c=colors, alpha=0.5)
+
+
+    plt.xlabel('PCA component 1')
+    plt.ylabel('PCA component 2')
+    plt.title(f'eps={target_eps!s}, clu={n_clusters!s}, out={n_outliers!s}')
+    plt.figlegend()
+    plt.show()
+
+    print('chksum target_labels =', sum(target_labels))
+    return target_labels, pca.components_
