@@ -1,0 +1,23 @@
+    ### WEEKDAYS ###
+count_type  bucket_size trip_types      eps                 k       min_samples     good?
+rel         15          start,end       2.51                                        no
+rel         15          total           1.53,1.29,1.01      5,7,10                  1.29 eh
+rel         60          total           0.93                5                       big center, tails clustered. maybe.
+rel         60          start,end       1.00                10      6               decent grouping, 29/136 outliers is a lot though
+rel         120         start,end       0.66                13      6               close, dense clusters, 48 outliers is a lot though
+rel         120         start,end                                   4               no
+rel         120         total                                       4               no, data very one big cluster
+
+    ### ALL DAYS ###
+count_type  bucket_size trip_types      eps                 k       min_samples     good?
+rel         120         total                                       4               no, data very one big cluster
+rel         60          start,end       0.83                12      6               sorta 2 lobes, 38 outliers
+rel         60          total                                       6               very concentrated data
+rel         15          total                                       4               ''
+rel         15          start,end       1.25                12      4               concentrated data split into 5 clusters, 23 outliers
+rel         15          start,end       1.18                13      6               concentrated data split into 5 clusters, 34 outliers
+
+
+
+
+

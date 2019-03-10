@@ -226,7 +226,7 @@ def count_bucketed_trips_by_station(trips, stations, resolution=60, ok_days=None
                                                  copy.deepcopy(total_hourly_counts)] for station in stations}
 
     # Poor man's enum
-    START =0
+    START = 0
     END = 1
     TOTAL = 2
 
@@ -294,7 +294,6 @@ def minute_of_day(timestamp):
 
 
 def plot_bucketed_count(bucketed_count, use_relative_count=False, group_n=4):
-
     xs = [x for x in range(len(bucketed_count))]
     # ws = [0.3] * len(bucketed_count)
     # print(f'DD of {len(bucketed_count)!s} buckets')
@@ -325,6 +324,23 @@ def plot_bucketed_count(bucketed_count, use_relative_count=False, group_n=4):
 
 def mse(A, B):
     return np.mean((B - A) ** 2)
+
+
+def assemble_station_data(stn_ids, counts_by_stations, use_start_plus_end=True):
+    station_data = []
+
+    for stn_id in stn_ids:
+        this_stn_data = []
+        if use_start_plus_end:
+            for count in counts_by_stations[stn_id][:2]:
+                this_stn_data += [relative for absolute, relative in count.values()]
+        else:  # Use  total instead of start_plus_end
+            count = counts_by_stations[stn_id][2]
+            this_stn_data = np.array([relative for absolute, relative in count.values()])
+
+        station_data.append(this_stn_data)
+    return station_data
+
 
 def pca_dim_reduction(data, n_components=2):
     pca = PCA(n_components=n_components)
@@ -439,7 +455,16 @@ def cluster_dbscan(data):
     # Black removed and is used for noise instead.
     unique_labels = set(labels)
     unique_colors = [plt.cm.get_cmap('viridis')(each) for each in np.linspace(0, 1, n_clusters)]
-    unique_colors.append((0, 0, 0, 1)) # Black is the last color, for label -1
+
+    # RGB
+    unique_colors = [(1, 0, 0, 0),
+                     (0, 1, 0, 0),
+                     (0, 0, 1, 0),
+                     (1, 1, 0, 0),
+                     (1, 0, 1, 0),
+                     (0, 1, 1, 0)]
+    unique_colors = unique_colors[:n_clusters]
+    unique_colors.append((0, 0, 0, 1))  # Black is the last color, for label -1
 
     colors = [unique_colors[label] for label in labels]
 

@@ -1,4 +1,4 @@
-import ReadData as rd, matplotlib.pyplot as plt, numpy as np, k_means
+import ReadData as rd, matplotlib.pyplot as plt, numpy as np, k_means, utils
 from collections import Counter, defaultdict
 from datetime import time
 
@@ -9,6 +9,8 @@ STATIONS_CSV_PATH = 'data/indego-stations-2018-10-19.csv'
 
 VIRTUAL_STATION_STATION_ID = '3000'
 
+FIG_FOLDER_PATH = "C:/Users/Noah/Google Drive/@@_SuperSenior/Plots/Station relative differences/"
+FIG_FORMAT = 'png'
 
 # Peak hours as defined by SEPTA's bike-on-subway policy: http://www.septa.org/policy/bike.html
 # Morning rush: 6:00am - 9:00am
@@ -85,11 +87,49 @@ resolution = 15
 
 all_start_buckets, all_end_buckets, all_total_buckets = rd.count_bucketed_trips(trips, resolution=resolution, ok_days=days_to_analyze)
 counts_by_stations = rd.count_bucketed_trips_by_station(trips, stations, resolution=resolution, ok_days=days_to_analyze)
+total_for_all_stns = sum([absolute for absolute, relative in all_total_buckets.values()])
 
 all_start_relative = np.array([relative for absolute, relative in all_start_buckets.values()])
 all_end_relative = np.array([relative for absolute, relative in all_end_buckets.values()])
 all_total_relative = np.array([relative for absolute, relative in all_total_buckets.values()])
 
+bucket_texts = all_total_buckets.keys()
+
+# For each station, find the deviance from the mean
+# and save the plot in FIG_FOLDER_PATH
+for station in stations:
+    stn_id = station['Station ID']
+    buckets = counts_by_stations[stn_id][0]
+    # print(buckets)
+
+    actual_counts = [list(abs_rel_tuple) for abs_rel_tuple in zip(*buckets.values())]
+    overall_counts = [list(abs_rel_tuple) for abs_rel_tuple in zip(*all_total_buckets.values())]
+
+    # Calculate difference for absolute counts
+    actual_absolute_counts = actual_counts[0]
+    overall_absolute_counts = overall_counts[0]
+    # Need to prorate the overall absolute counts down to what we'd expect those counts to be based on this station's
+    # portion of the overall total rides
+    total_for_this_stn = sum(actual_absolute_counts)
+    stn_percent = total_for_this_stn / total_for_all_stns
+    expected_absolute_counts = [stn_percent * absolute for absolute in overall_absolute_counts]
+    absolute_diffs = [actual - expected for actual, expected in zip(actual_absolute_counts, expected_absolute_counts)]
+
+    # Calculate difference for relative counts
+    actual_relative_counts = actual_counts[1]
+    # Relative counts don't need "scaling down", since they're already relative
+    expected_relative_counts = overall_counts[1]
+    relative_diffs = [actual - expected for actual, expected in zip(actual_relative_counts, expected_relative_counts)]
+
+    stn_total_buckets = dict(zip(bucket_texts, list(zip(absolute_diffs, relative_diffs))))
+
+    plt.figure(figsize=(10, 2))
+    rd.plot_bucketed_count(stn_total_buckets, use_relative_count=True)
+    clean_stn_name = station['Station Name'].replace('"', '')
+    plt.title(clean_stn_name)
+    path = FIG_FOLDER_PATH + clean_stn_name + '.' + FIG_FORMAT
+    plt.savefig(path, format=FIG_FORMAT)
+    plt.close()
 
 ########################################
 # MSE Analysis
@@ -114,7 +154,7 @@ all_total_relative = np.array([relative for absolute, relative in all_total_buck
 #
 # plt.figure(figsize=(10, 10))
 # num_plots = 10
-# rows_plots = (num_plots + 1) / 2  # Ensures the last plot is    n't cut off for an odd number of plots
+# rows_plots = (num_plots + 1) / 2  # Ensures the last plot isn't cut off for an odd number of plots
 # cols_plots = 2
 # plot_ind = 0
 #
@@ -132,52 +172,41 @@ all_total_relative = np.array([relative for absolute, relative in all_total_buck
 
 ######################################################################
 # Total bucket plot
-# plt.figure(figsize=(10, 2))
-# rd.plot_bucketed_count(all_total_buckets, use_relative_count=relative)
-# plt.show()
+plt.figure(figsize=(10, 2))
+rd.plot_bucketed_count(all_total_buckets, use_relative_count=True)
+plt.show()
 
 ######################################################################
-# PCA
-station_data = []
+# Preprocess data for DBSCAN
 stn_ids = []
-use_start_plus_end = True
-
 for stn_id in station_names:
     stn_ids.append(stn_id)
 
-    this_stn_data = []
-    if use_start_plus_end:
-        for count in counts_by_stations[stn_id][:2]:
-            this_stn_data += [relative for absolute, relative in count.values()]
-    else:
-        count = counts_by_stations[stn_id][2]
-        this_stn_data = np.array([relative for absolute, relative in count.values()])
+station_data = rd.assemble_station_data(stn_ids, counts_by_stations)
 
-    station_data.append(this_stn_data)
-# projected_PCA_fit = rd.pca_dim_reduction(station_data)
-
-#######################################
+######################################################################
 # DBSCAN
 dbscan_labels, pca_components = rd.cluster_dbscan(station_data)
 component_weights_1 = zip(all_total_buckets.keys(), pca_components[0])
 component_weights_2 = zip(all_total_buckets.keys(), pca_components[1])
 
-print('Component 1:')
-for bucket, weight in sorted(component_weights_1, key=lambda x: abs(x[1]), reverse=True)[:10]:
-    print(bucket, weight)
+######################################################################
+# Print PCA component weights
+# print('Component 1:')
+# for bucket, weight in sorted(component_weights_1, key=utils.abs_idx1, reverse=True)[:10]:
+#     print(bucket, weight)
+# print()
+# print('Component 2:')
+# for bucket, weight in sorted(component_weights_2, key=utils.abs_idx1, reverse=True)[:10]:
+#     print(bucket, weight)
 
-print('\nComponent 2:')
-for bucket, weight in sorted(component_weights_2, key=lambda x: abs(x[1]), reverse=True)[:10]:
-    print(bucket, weight)
-
-print('chksum dbscan_labels =', sum(dbscan_labels), 'len =', len(dbscan_labels))
+# Associate each station ID with its DBSCAN label
 stn_labels = zip(stn_ids, dbscan_labels)
-stn_labels = sorted(stn_labels, key=lambda x: x[1])
-
-print('chksum stn_labels =', sum(label for _, label in stn_labels), 'len =', len(stn_labels))
-
-for stn_id, label in stn_labels:
-    print(label, station_names[stn_id])
+# Sort by label
+stn_labels = sorted(stn_labels, key=utils.idx1)
+#Print the label
+# for stn_id, label in stn_labels:
+#     print(label, station_names[stn_id])
 
 # test_stn_id = max_start_MSE_stn
 #
