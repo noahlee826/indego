@@ -1,10 +1,11 @@
+import os
 import copy
 import csv
 import datetime as dt
 import matplotlib.pyplot as plt
 import numpy as np
 import time
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from itertools import cycle
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
@@ -14,35 +15,61 @@ from sklearn.decomposition import PCA
 from math import sqrt
 from scipy.spatial.distance import cdist
 
+DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S'
 
-def extract_trips(csv_path, trip_list):
+
+def extract_trips_dir(csv_dir, trip_list, valid_station_ids):
+    csv_paths = []
+    trip_list = []
+
+    print(f'Extracting files from ', csv_dir)
+
+    for file in os.listdir(csv_dir):
+        if file.endswith(".csv"):
+            csv_paths.append(os.path.join(csv_dir, file))
+
+    for csv_path in csv_paths:
+        trip_list.extend(extract_trips(csv_path, [], valid_station_ids))
+
+    print(f'Finished extracting files from ', csv_dir)
+    return trip_list
+
+
+def extract_trips(csv_path, trip_list, exclude_station_ids=None):
+    if exclude_station_ids is None:
+        exclude_station_ids = []
     count = 0
     # Extract trips from csv, put them in an OrderedDict with proper field names
     with open(csv_path, newline='') as tripdata_csv:
-        print('Opening ', csv_path)
-        reader = csv.DictReader(tripdata_csv, delimiter=',', quotechar='|')
+        print('Opening\t', csv_path)
+        reader = csv.DictReader(tripdata_csv, delimiter=',', quotechar='"')
         for row in reader:
             count += 1
-            #print(row)
-            if (not row['start_station'] == '3000') and (not row['end_station'] == '3000'):
+
+            start_station_id = row['start_station']
+            end_station_id = row['end_station']
+            # Only count rows for which there is a valid station
+            if (start_station_id not in exclude_station_ids) and (end_station_id not in exclude_station_ids):
                 trip_list.append(row)
-    print('Done with ', csv_path)
+
+    print('Closing\t', csv_path)
     print(f'Saw {count!s} rows')
     print(f'Extracted {len(trip_list)!s} trips')
-    #print(trip_list)
+    print('Ignored the following stations:')
+    print(exclude_station_ids)
+    return trip_list
 
 
-def extract_stations(csv_path, station_list):
-    count = 0
+def extract_stations_from_file(csv_path, station_list, exclude_station_ids):
     # Extract trips from csv, put them in an OrderedDict with proper field names
     with open(csv_path, newline='') as tripdata_csv:
         reader = csv.DictReader(tripdata_csv, delimiter=',', quotechar='|')
         for row in reader:
-            count += 1
-            #print(row)
-            station_list.append(row)
-            if count % 10000 == 0:
-                print(f'Seen {count!s} rows')
+            if row['Station ID'] not in exclude_station_ids:
+                station_list.append(row)
+    return station_list
+
+
 
 
 def plot_trips(trip_list):
@@ -86,7 +113,7 @@ def count_trips_per_station(trips, outbound_station_counter, inbound_station_cou
         ok_days = [1, 2, 3, 4, 5, 6, 7]
 
     for trip in trips:
-        trip_start = dt.datetime.strptime(trip['start_time'], '%m/%d/%Y %H:%M')
+        trip_start = dt.datetime.strptime(trip['start_time'], DATETIME_FORMAT)
         trip_start_time = trip_start.time()
 
         is_in_time_window = not has_window or is_time_between(start_time_window, end_time_window, trip_start_time)
@@ -105,7 +132,7 @@ def count_trips_per_station_defaultdict(trips, outbound_station_counter, inbound
     timer_begin = time.time()
     has_window = start_time_window and end_time_window
     for trip in trips:
-        trip_start = dt.datetime.strptime(trip['start_time'], '%m/%d/%Y %H:%M')
+        trip_start = dt.datetime.strptime(trip['start_time'], DATETIME_FORMAT)
         trip_start_time = trip_start.time()
         is_weekday = trip_start.isoweekday() < 6
         if (not has_window or is_time_between(start_time_window, end_time_window, trip_start_time))\
@@ -166,7 +193,7 @@ def count_bucketed_trips(trips, resolution=60, ok_days=None, station_id=None):
     # bucket_size = 1440 / float(num_buckets)
 
     for trip in trips:
-            trip_start = dt.datetime.strptime(trip['start_time'], '%m/%d/%Y %H:%M')
+            trip_start = dt.datetime.strptime(trip['start_time'], DATETIME_FORMAT)
             is_in_days_window = trip_start.isoweekday() in ok_days
 
             if is_in_days_window:
@@ -175,7 +202,7 @@ def count_bucketed_trips(trips, resolution=60, ok_days=None, station_id=None):
                 start_hourly_counts[bucket_texts[bucket_number]] += 1
                 total_hourly_counts[bucket_texts[bucket_number]] += 1
 
-                trip_end = dt.datetime.strptime(trip['end_time'], '%m/%d/%Y %H:%M')
+                trip_end = dt.datetime.strptime(trip['end_time'], DATETIME_FORMAT)
                 end_minute = minute_of_day(trip_end)
                 bucket_number = int(end_minute / resolution)
                 end_hourly_counts[bucket_texts[bucket_number]] += 1
@@ -216,14 +243,21 @@ def count_bucketed_trips_by_station(trips, stations, resolution=60, ok_days=None
         num_buckets += 1
     bucket_times = [zero_time + dt.timedelta(minutes=resolution * x) for x in range(num_buckets)]
     bucket_texts = [t.strftime('%H:%M') for t in bucket_times]
+
     start_hourly_counts = {k: 0 for k in bucket_texts}  #  defaultdict(int, bucket_texts)
     end_hourly_counts = {k: 0 for k in bucket_texts} #  defaultdict(int)
     total_hourly_counts = {k: 0 for k in bucket_texts}
+
+    zero_hourly_counts = {k: 0 for k in bucket_texts}
+    default_gen = lambda: [zero_hourly_counts] * 3
     # bucket_size = 1440 / float(num_buckets)
 
-    counts_by_station = {station['Station ID']: [copy.deepcopy(start_hourly_counts),
-                                                 copy.deepcopy(end_hourly_counts),
-                                                 copy.deepcopy(total_hourly_counts)] for station in stations}
+    # Making this a defaultdict ensures that we can still count even if we get an unexpected station ID
+    counts_by_station = defaultdict(default_gen,
+                                    {station['Station ID']: [copy.deepcopy(start_hourly_counts),
+                                                             copy.deepcopy(end_hourly_counts),
+                                                             copy.deepcopy(total_hourly_counts)]
+                                     for station in stations})
 
     # Poor man's enum
     START = 0
@@ -231,7 +265,7 @@ def count_bucketed_trips_by_station(trips, stations, resolution=60, ok_days=None
     TOTAL = 2
 
     for trip in trips:
-        trip_start = dt.datetime.strptime(trip['start_time'], '%m/%d/%Y %H:%M')
+        trip_start = dt.datetime.strptime(trip['start_time'], DATETIME_FORMAT)
         is_in_days_window = trip_start.isoweekday() in ok_days
 
         if is_in_days_window:
@@ -245,7 +279,7 @@ def count_bucketed_trips_by_station(trips, stations, resolution=60, ok_days=None
             counts_by_station[stn_id][TOTAL][bkt_id] += 1
 
             # End of trip
-            trip_end = dt.datetime.strptime(trip['end_time'], '%m/%d/%Y %H:%M')
+            trip_end = dt.datetime.strptime(trip['end_time'], DATETIME_FORMAT)
             end_minute = minute_of_day(trip_end)
             bucket_number = int(end_minute / resolution)
             stn_id = trip['end_station']
@@ -253,6 +287,8 @@ def count_bucketed_trips_by_station(trips, stations, resolution=60, ok_days=None
 
             counts_by_station[stn_id][END][bkt_id] += 1
             counts_by_station[stn_id][TOTAL][bkt_id] += 1
+
+    complete_counts_by_station = defaultdict(default_gen)
 
     for stn_id, counts_list in counts_by_station.items():
         starts = counts_list[START]
@@ -263,26 +299,31 @@ def count_bucketed_trips_by_station(trips, stations, resolution=60, ok_days=None
         total_sum = sum(totals.values())
         # print(stn_id, starts)
 
+        start_tuples = OrderedDict()
+        end_tuples = OrderedDict()
+        total_tuples = OrderedDict()
+
         for bucket in starts:
             absolute = starts[bucket]
             # print('abs', str(absolute), 'sum', str(start_sum))
             relative = absolute / start_sum if start_sum > 0 else 0
-            starts[bucket] = (absolute, relative)
+            start_tuples[bucket] = (absolute, relative)
         for bucket in ends:
             absolute = ends[bucket]
             relative = absolute / end_sum if end_sum > 0 else 0
-            ends[bucket] = (absolute, relative)
+            end_tuples[bucket] = (absolute, relative)
         for bucket in totals:
             absolute = totals[bucket]
             relative = absolute / total_sum if total_sum > 0 else 0
-            totals[bucket] = (absolute, relative)
+            total_tuples[bucket] = (absolute, relative)
 
+        complete_counts_by_station[stn_id] = [start_tuples, end_tuples, total_tuples]
         # Sort the dicts
         starts = OrderedDict(sorted(start_hourly_counts.items()))
         ends = OrderedDict(sorted(end_hourly_counts.items()))
         totals = OrderedDict(sorted(total_hourly_counts.items()))
 
-    return counts_by_station
+    return complete_counts_by_station
 
 
 # Returns an int representing the the minute of the day this timestamp occurs in
@@ -357,10 +398,10 @@ def pca_dim_reduction(data, n_components=2):
 
 def cluster_dbscan(data):
     # Based on https://scikit-learn.org/stable/auto_examples/cluster/plot_dbscan.html by scikit-learn developers
-    print('len of data =', len(data))
+    # print('len of data =', len(data))
     scaled_data = StandardScaler().fit_transform(data)
     n_samples = scaled_data.shape[0]
-    print('len of scaled_data =', len(scaled_data))
+    # print('len of scaled_data =', len(scaled_data))
 
     ### Don't need to do this on scaled data. Only do it on PCA projected data, see below
     # k means clustering w/ elbow plot to determine K
@@ -448,7 +489,7 @@ def cluster_dbscan(data):
     clustered = DBSCAN(eps=target_eps, min_samples=4).fit(projected_data)
     labels = clustered.labels_
     target_labels = labels
-    print('chksum target_labels =', sum(target_labels), 'len =', len(target_labels))
+    # print('chksum target_labels =', sum(target_labels), 'len =', len(target_labels))
     # Number of clusters in labels, ignoring noise if present.
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     n_outliers = sum([(1 if label == -1 else 0) for label in labels])
@@ -478,5 +519,5 @@ def cluster_dbscan(data):
     plt.figlegend()
     plt.show()
 
-    print('chksum target_labels =', sum(target_labels))
+    # print('chksum target_labels =', sum(target_labels))
     return target_labels, pca.components_

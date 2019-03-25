@@ -1,15 +1,19 @@
-import ReadData as rd, matplotlib.pyplot as plt, numpy as np, k_means, utils
+import os, ReadData as rd, matplotlib.pyplot as plt, numpy as np, utils
 from collections import Counter, defaultdict
 from datetime import time
 
-# TRIPS_CSV_PATH = 'data/indego-trips-2018-q3-10000.csv'
 TRIPS_CSV_PATH = 'data/indego-trips-2018-q3.csv'
+# TRIPS_CSV_PATH = 'data/indego-trips-2018-q3-10000.csv'
 # TRIPS_CSV_PATH = 'data/indego-trips-2018-q3-tiny.csv'
+TRIPS_CSV_DIR = 'data//2018-all'
+
+
 STATIONS_CSV_PATH = 'data/indego-stations-2018-10-19.csv'
 
 VIRTUAL_STATION_STATION_ID = '3000'
+EXCLUDE_STATION_IDS = [VIRTUAL_STATION_STATION_ID]
 
-FIG_FOLDER_PATH = "C:/Users/Noah/Google Drive/@@_SuperSenior/Plots/Station relative differences/"
+FIG_FOLDER_PATH = "C:/Users/Noah/Google Drive/@@_SuperSenior/Plots/picdump/"
 FIG_FORMAT = 'png'
 
 # Peak hours as defined by SEPTA's bike-on-subway policy: http://www.septa.org/policy/bike.html
@@ -38,9 +42,15 @@ morning_inbound_dd = defaultdict(int)
 evening_outbound_dd = defaultdict(int)
 evening_inbound_dd = defaultdict(int)
 
-rd.extract_trips(TRIPS_CSV_PATH, trips)
-rd.extract_stations(STATIONS_CSV_PATH, stations)
+# Exclude rows where 'Virtual Station' is the beginning or end
+stations = rd.extract_stations_from_file(STATIONS_CSV_PATH, stations, EXCLUDE_STATION_IDS)
 station_names = {station['Station ID']: station['Station Name'] for station in stations}
+station_names = defaultdict(lambda: 'Station Name Missing', station_names)
+# trips = rd.extract_trips(TRIPS_CSV_PATH, trips)
+trips = rd.extract_trips_dir(TRIPS_CSV_DIR, trips, EXCLUDE_STATION_IDS)
+
+
+# Convenience mapping to easily find Station Name from Station ID
 
 # rd.count_trips_per_station(trips, morning_outbound, morning_inbound,
 #                            start_morning_window, end_morning_window, ok_days=weekdays)
@@ -85,8 +95,16 @@ station_names = {station['Station ID']: station['Station Name'] for station in s
 days_to_analyze = all_days
 resolution = 15
 
-all_start_buckets, all_end_buckets, all_total_buckets = rd.count_bucketed_trips(trips, resolution=resolution, ok_days=days_to_analyze)
-counts_by_stations = rd.count_bucketed_trips_by_station(trips, stations, resolution=resolution, ok_days=days_to_analyze)
+print('Counting bucketed trips system-wide...')
+all_start_buckets, all_end_buckets, all_total_buckets = rd.count_bucketed_trips(trips,
+                                                                                resolution=resolution,
+                                                                                ok_days=days_to_analyze)
+
+print('Counting bucketed trips per station...')
+counts_by_stations = rd.count_bucketed_trips_by_station(trips, stations,
+                                                        resolution=resolution,
+                                                        ok_days=days_to_analyze)
+
 total_for_all_stns = sum([absolute for absolute, relative in all_total_buckets.values()])
 
 all_start_relative = np.array([relative for absolute, relative in all_start_buckets.values()])
@@ -97,9 +115,15 @@ bucket_texts = all_total_buckets.keys()
 
 # For each station, find the deviance from the mean
 # and save the plot in FIG_FOLDER_PATH
-for station in stations:
-    stn_id = station['Station ID']
-    buckets = counts_by_stations[stn_id][0]
+for stn_id, counts_by_station in counts_by_stations.items():
+    # print('Working on station', station['Station ID'], station['Station Name'])
+    # print('Working on station', stn_id, station_names[stn_id])
+
+    # stn_id = station['Station ID']
+
+    # buckets = counts_by_stations[stn_id][0] # 0 = trip starts, 1 = trip ends, 2 = total
+    buckets = counts_by_station[0]  # 0 = trip starts, 1 = trip ends, 2 = total
+
     # print(buckets)
 
     actual_counts = [list(abs_rel_tuple) for abs_rel_tuple in zip(*buckets.values())]
@@ -123,11 +147,22 @@ for station in stations:
 
     stn_total_buckets = dict(zip(bucket_texts, list(zip(absolute_diffs, relative_diffs))))
 
-    plt.figure(figsize=(10, 2))
-    rd.plot_bucketed_count(stn_total_buckets, use_relative_count=True)
-    clean_stn_name = station['Station Name'].replace('"', '')
+    use_relative = True
+
+    plt.figure(figsize=(10, 3))
+    rd.plot_bucketed_count(stn_total_buckets, use_relative_count=use_relative)
+    clean_stn_name = station_names[stn_id].replace('"', '')
     plt.title(clean_stn_name)
-    path = FIG_FOLDER_PATH + clean_stn_name + '.' + FIG_FORMAT
+    path = FIG_FOLDER_PATH + stn_id + ' ' + clean_stn_name + '.' + FIG_FORMAT
+    plt.xlabel('Time of Day')
+    plt.ylabel('Portion of Avg Daily Trips')
+    if use_relative:
+        plt.ylim([-0.06, 0.08])
+        plt.yticks(np.arange(-0.06, 0.08, 0.01))
+    plt.grid(True, axis='y', which='both')
+    plt.tight_layout()
+    # plt.show()
+    # print('Saving plot to:', path)
     plt.savefig(path, format=FIG_FORMAT)
     plt.close()
 
