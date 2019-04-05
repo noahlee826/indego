@@ -60,10 +60,15 @@ def extract_trips(csv_path, trip_list, exclude_station_ids=None):
     return trip_list
 
 
-def extract_stations_from_file(csv_path, station_list, exclude_station_ids):
+def extract_stations_from_file(csv_path, station_list=None, exclude_station_ids=None):
+    if station_list is None:
+        station_list = []
+    if exclude_station_ids is None:
+        exclude_station_ids = []
+
     # Extract trips from csv, put them in an OrderedDict with proper field names
     with open(csv_path, newline='') as tripdata_csv:
-        reader = csv.DictReader(tripdata_csv, delimiter=',', quotechar='|')
+        reader = csv.DictReader(tripdata_csv, delimiter=',', quotechar='"')
         for row in reader:
             if row['Station ID'] not in exclude_station_ids:
                 station_list.append(row)

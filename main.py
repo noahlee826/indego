@@ -8,7 +8,8 @@ TRIPS_CSV_PATH = 'data/indego-trips-2018-q3.csv'
 TRIPS_CSV_DIR = 'data//2018-all'
 
 
-STATIONS_CSV_PATH = 'data/indego-stations-2018-10-19.csv'
+# STATIONS_CSV_PATH = 'data/indego-stations-2018-10-19.csv'
+STATIONS_CSV_PATH = 'data/indego-stations-2018-10-19-with-labels.csv'
 
 VIRTUAL_STATION_STATION_ID = '3000'
 EXCLUDE_STATION_IDS = [VIRTUAL_STATION_STATION_ID]

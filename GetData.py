@@ -1,41 +1,55 @@
 import json, urllib.request, configparser, utils
 from census import Census
 from us import states
+from collections import defaultdict
 
+# returns list of stations
+def get_indego_station_info(include_station_ids=None):
+    print('get indego info using station list:', include_station_ids)
+    include_all_stations = False
+    if include_station_ids is None:
+        include_all_stations = True
 
-def get_station_info():
     data = urllib.request.urlopen("https://gbfs.bcycle.com/bcycle_indego/station_information.json").read()
     station_info_json = json.loads(data)
     # print(json.dumps(station_info_json, indent=4, sort_keys=False))
-    station_list = station_info_json['data']['Stations']
+    station_list = station_info_json['data']['stations']
     # print(station_list)
 
     # Station IDs are given in the format 'bcycle_indego_NNNN' where N is [0..9]
     # We only want the numeric part
     # station_latlons = {stn['station_id'].rsplit('_', maxsplit=1)[1]: (stn['lat'], stn['lon']) for stn in station_list}
     # print(station_latlons)
+
     for station in station_list:
         station['station_id'] = station['station_id'].rsplit('_', maxsplit=1)[1]
-    return station_list
+    # result_list = [station for station in station_list if station['station_id'] in include_station_ids
+    #                                                    or include_all_stations]
+    result_list = []
+    for station in station_list:
+        if include_all_stations or station['station_id'] in include_station_ids:
+            result_list.append(station)
+    return result_list
 
 
 def get_FCC_block_info(lat, lon):
     # lat, lon = latlon
     base_api_url = "https://geo.fcc.gov/api/census/block/find?"
     api_request = base_api_url \
-                    + 'latitude=' + str(lat) + '&' \
-                    + 'longitude=' + str(lon) + '&' \
-                    + '&format=json'
+                  + 'latitude=' + str(lat) + '&' \
+                  + 'longitude=' + str(lon) + '&' \
+                  + '&format=json'
     data = urllib.request.urlopen(api_request).read()
     return json.loads(data)
 
 
-def get_station_characteristics(census=None):
+def get_station_characteristics(census=None, include_station_ids=None):
+    print('get station chars using station list:', include_station_ids)
     if census is None:
         census = Census(utils.get_config_val('API Keys', 'census_api'), year=2017)
 
     blockgroup_densities = get_census_pdb_pop_density()
-    station_list = get_station_info()
+    station_list = get_indego_station_info(include_station_ids)
 
     for station in station_list:
         # print(station)
@@ -46,7 +60,8 @@ def get_station_characteristics(census=None):
         county = block_info['County']['FIPS'][2:5]
         state = block_info['State']['FIPS']
 
-        blockgroup_full = block_info['Block']['FIPS'][:12]  # Need the first 11 digits to identify state, county, blockgroup
+        blockgroup_full = block_info['Block']['FIPS'][
+                          :12]  # Need the first 11 digits to identify state, county, blockgroup
 
         station['block_FIPS'] = block
         station['blockgroup_FIPS'] = blockgroup
@@ -54,9 +69,10 @@ def get_station_characteristics(census=None):
         station['county_FIPS'] = county
         station['state_FIPS'] = state
         station['pop_density'] = blockgroup_densities[blockgroup_full]
-        station['pct_in_poverty'] = get_acs5_under_poverty(census, state, county, tract, blockgroup)
-        print(station)
+        station['pct_in_poverty'], station['med_income'] = get_acs5_data(census, state, county, tract, blockgroup)
+        # print(station)
     print(station_list)
+    return station_list
 
 
 # Returns a dict of the form {blockgroup: population density
@@ -70,30 +86,167 @@ def get_census_pdb_pop_density():
     labels = json_data[0]
 
     blockgroups_list = [dict(zip(labels, row)) for row in json_data[1:]]
-    blockgroups_densities = {bg['state'] + bg['county'] + bg['tract'] + bg['block group'] :
-                             float(bg['Tot_Population_ACS_12_16']) / float(bg['LAND_AREA'])
+    blockgroups_densities = {bg['state'] + bg['county'] + bg['tract'] + bg['block group']:
+                                 float(bg['Tot_Population_ACS_12_16']) / float(bg['LAND_AREA'])
                              for bg in blockgroups_list}
     return blockgroups_densities
 
 
-def get_acs5_under_poverty(census, state, county, tract, blockgroup):
-    #TODO maybe hammer this out to only make one API call instead of one call per blockgroup
+# returns tuple of (percent in poverty, median income)
+def get_acs5_data(census, state, county, tract, blockgroup):
+    # TODO maybe hammer this out to only make one API call instead of one call per blockgroup
 
     # For complete list of available variables, see
     # (WARNING: LARGE PAGE) https://api.census.gov/data/2017/acs/acs5/variables.html
 
-    fields = ('B00001_001E',  # Estimate!!Total
-              'B23024_002E')  # Estimate!!Total!!Income in the past 12 months below poverty level
-    data = census.acs5.state_county_blockgroup(fields, state, county, blockgroup, tract=tract) # returns list with 1 elt, a dict containing a key for each value provided.
+    total_pop_field = 'B01003_001E'  # Estimate!!Total	TOTAL POPULATION
+    num_poverty_field = 'B23024_002E'  # Estimate!!Total!!Income in the past 12 months below poverty level
+    med_income_field = 'B19001_001E'  # Estimate!!Total	    HOUSEHOLD INCOME IN THE PAST 12 MONTHS (IN 2017 INFLATION-ADJUSTED DOLLARS)
+    # B21004_001E # another possible median income
+    bg_fields = (total_pop_field,
+                 num_poverty_field)
+    tract_fields = (med_income_field)
+
+    # Returns list with 1 elt, a dict containing a key for each value provided.
+    bg_data = census.acs5.state_county_blockgroup(bg_fields, state, county, blockgroup, tract=tract)
+    tract_data = census.acs5.state_county_tract(tract_fields, state, county, tract)
+    # print(tract_data)
     # print(data)
-    tot_pop = data[0][fields[0]]
-    num_poverty = data[0][fields[1]]
+    tot_pop = bg_data[0][total_pop_field]
+    num_poverty = bg_data[0][num_poverty_field]
+    med_income = tract_data[0][med_income_field]
     pct_in_poverty = (num_poverty / tot_pop) if tot_pop is not None and tot_pop > 0 else 0
-    return pct_in_poverty
+    return pct_in_poverty, med_income
+
+
+# fields is a list of column names in the table described at the API documentation below
+# tracts is list of 3-digit census tracts represented as strings
+# API Documentation:
+# https://cityofphiladelphia.github.io/carto-api-explorer/#opa_properties_public
+# http://metadata.phila.gov/#home/datasetdetails/5543865f20583086178c4ee5/
+def get_opa_data(fields=None, tracts=None):
+    base_url = 'https://phl.carto.com/api/v2/sql?q=SELECT'
+    cols = '*' if fields is None \
+        else ', '.join(fields)
+    FROM = 'FROM'
+    table = 'opa_properties_public'
+    WHERE = 'WHERE'
+    census_tract = 'census_tract'
+    IN = 'IN'
+    tract_value_list = '()' if tracts is None \
+        else str(tuple(tracts))
+    tract_clause = '' if tracts is None else ' WHERE census_tract IN {0}'.format(tract_value_list)
+
+    query = "https://phl.carto.com/api/v2/sql?q=SELECT {0} FROM opa_properties_public{1}".format(cols, tract_clause)
+
+    print(query)
+    # data = urllib.request.urlopen(query).read()
+    # opa_data = json.loads(data)
+
+
+def get_station_FIPS(census=None, include_station_ids=None):
+    if census is None:
+        census = Census(utils.get_config_val('API Keys', 'census_api'), year=2017)
+
+    station_list = get_indego_station_info(include_station_ids)
+
+    for station in station_list:
+        # print(station)
+        block_info = get_FCC_block_info(station['lat'], station['lon'])
+        block = block_info['Block']['FIPS'][12:]
+        blockgroup = block_info['Block']['FIPS'][11]  # The 11th digit identifies the block group
+        tract = block_info['Block']['FIPS'][5:11]
+        county = block_info['County']['FIPS'][2:5]
+        state = block_info['State']['FIPS']
+
+        blockgroup_full = block_info['Block']['FIPS'][
+                          :12]  # Need the first 11 digits to identify state, county, blockgroup
+
+        station['block_FIPS'] = block
+        station['blockgroup_FIPS'] = blockgroup
+        station['tract_FIPS'] = tract
+        station['county_FIPS'] = county
+        station['state_FIPS'] = state
+    return station_list
+
+
+def get_zoning_data(include_station_ids=None):
+    station_list = get_indego_station_info(include_station_ids)
+    station_list_dds = [defaultdict(int, station) for station in station_list]
+    zoning_groups = set()
+
+    for station in station_list_dds:
+        lat = station['lat']
+        lon = station['lon']
+        zoning_group = get_zoning_group(lat, lon)
+        station[zoning_group] = 1
+        zoning_groups.add(zoning_group)
+
+    for station in station_list_dds:
+        print(station)
+    return station_list_dds, zoning_groups
+
+# Returns a string that is the zoning group of closest zoned plot
+def get_zoning_group(lat, lon):
+    # Returns properties whose footprints are entirely within 500m of pt
+    # query = str('https://services.arcgis.com/fLeGjb7u4uXqeF9q/arcgis/rest/services/Zoning_BaseDistricts/FeatureServer/0/query?where=1%3D1&objectIds=&time=&geometry=%7B"x"+%3A+{0}%2C+"y"+%3A+{1}%2C+"spatialReference"%3A%7B"wkid"+%3A+4326%7D%7D&geometryType=esriGeometryPoint&inSR=&spatialRel=esriSpatialRelContains&resultType=none&distance=500.0&units=esriSRUnit_Meter&returnGeodetic=false&outFields=*&returnGeometry=true&returnCentroid=false&multipatchOption=xyFootprint&maxAllowableOffset=&geometryPrecision=&f=pjson&token=')\
+    # for obj in zgroup_data['features']:
+    #     zgroup = obj['attributes']['ZONINGGROUP'] # Name of zoning group (Commercial, Residential, etc.)
+    #     zgroup_areas[zgroup] += obj['attributes']['Shape__Area']
+
+    radius = 1.0  # Many stations are located in the public right-of-way, just barely outside of a zoned plot
+                  # So we need to include a small radius around the point to intersect a zoned plot.
+                  # Units are meters.
+    query = str('https://services.arcgis.com/fLeGjb7u4uXqeF9q/arcgis/rest/services/Zoning_BaseDistricts/FeatureServer/0/query?where=1%3D1&objectIds=&time=&geometry=%7B"x"+%3A+{0}%2C+"y"+%3A+{1}%2C+"spatialReference"%3A%7B"wkid"+%3A+4326%7D%7D&geometryType=esriGeometryPoint&inSR=&spatialRel=esriSpatialRelIntersects&resultType=none&distance={2}&units=esriSRUnit_Meter&returnGeodetic=false&outFields=*&returnGeometry=true&returnCentroid=false&multipatchOption=xyFootprint&maxAllowableOffset=&geometryPrecision=&outSR=&datumTransformation=&applyVCSProjection=false&returnIdsOnly=false&returnUniqueIdsOnly=false&returnCountOnly=false&returnExtentOnly=false&returnQueryGeometry=false&returnDistinctValues=false&orderByFields=&groupByFieldsForStatistics=&outStatistics=&having=&resultOffset=&resultRecordCount=&returnZ=false&returnM=false&returnExceededLimitFeatures=true&quantizationParameters=&sqlFormat=none&f=pjson&token=') \
+        .format(lon, lat, str(radius))  # The API is in (x, y) format, which is {lon, lat)
+    print(query)
+    data = urllib.request.urlopen(query).read()
+    json_data = json.loads(data)
+
+    # May need to update query to enlarge the radius to account for stations further from a zoned plot.
+    while len(json_data['features']) == 0:  # Each itme in json_data['features'] is a zoned plot.
+        radius *= 1.5
+        query = str(
+            'https://services.arcgis.com/fLeGjb7u4uXqeF9q/arcgis/rest/services/Zoning_BaseDistricts/FeatureServer/0/query?where=1%3D1&objectIds=&time=&geometry=%7B"x"+%3A+{0}%2C+"y"+%3A+{1}%2C+"spatialReference"%3A%7B"wkid"+%3A+4326%7D%7D&geometryType=esriGeometryPoint&inSR=&spatialRel=esriSpatialRelIntersects&resultType=none&distance={2}&units=esriSRUnit_Meter&returnGeodetic=false&outFields=*&returnGeometry=true&returnCentroid=false&multipatchOption=xyFootprint&maxAllowableOffset=&geometryPrecision=&outSR=&datumTransformation=&applyVCSProjection=false&returnIdsOnly=false&returnUniqueIdsOnly=false&returnCountOnly=false&returnExtentOnly=false&returnQueryGeometry=false&returnDistinctValues=false&orderByFields=&groupByFieldsForStatistics=&outStatistics=&having=&resultOffset=&resultRecordCount=&returnZ=false&returnM=false&returnExceededLimitFeatures=true&quantizationParameters=&sqlFormat=none&f=pjson&token=') \
+            .format(lon, lat, str(radius))  # The API is in (x, y) format, which is {lon, lat)
+        print('Incremented Distance... dist = {0}'.format(str(radius)))
+        print(query)
+        data = urllib.request.urlopen(query).read()
+        json_data = json.loads(data)
+
+    # Use the first feature, typically the closest if there's more than one
+    zoning_group = json_data['features'][0]['attributes']['ZONINGGROUP']
+    return zoning_group
+
+
+# radius units are meters
+# Returns set of zoning groups that appear within radius meters of (lat, lon)
+def get_nearby_zoning_group(lat, lon, radius=0.0):
+    query = str(
+        'https://services.arcgis.com/fLeGjb7u4uXqeF9q/arcgis/rest/services/Zoning_BaseDistricts/FeatureServer/0/query?where=1%3D1&objectIds=&time=&geometry=%7B"x"+%3A+{0}%2C+"y"+%3A+{1}%2C+"spatialReference"%3A%7B"wkid"+%3A+4326%7D%7D&geometryType=esriGeometryPoint&inSR=&spatialRel=esriSpatialRelIntersects&resultType=none&distance={2}&units=esriSRUnit_Meter&returnGeodetic=false&outFields=*&returnGeometry=true&returnCentroid=false&multipatchOption=xyFootprint&maxAllowableOffset=&geometryPrecision=&outSR=&datumTransformation=&applyVCSProjection=false&returnIdsOnly=false&returnUniqueIdsOnly=false&returnCountOnly=false&returnExtentOnly=false&returnQueryGeometry=false&returnDistinctValues=false&orderByFields=&groupByFieldsForStatistics=&outStatistics=&having=&resultOffset=&resultRecordCount=&returnZ=false&returnM=false&returnExceededLimitFeatures=true&quantizationParameters=&sqlFormat=none&f=pjson&token=') \
+        .format(lon, lat, str(radius))  # The API is in (x, y) format, which is {lon, lat)
+    print(query)
+    data = urllib.request.urlopen(query).read()
+    json_data = json.loads(data)
+    zoning_groups = set([plot['attributes']['ZONINGGROUP'] for plot in json_data['features']])
+    return zoning_groups
+
+
+
+# stations = get_station_FIPS()
+# tracts = set([str(station['tract_FIPS'])[-3:] for station in stations])
+# important_cols = ['category_code',
+#                   'category_code_description',
+#                   'census_tract',
+#                   'frontage',
+#                   'total_area',
+#                   'zoning'
+#                   ]
+# get_opa_data(fields=important_cols, tracts=tracts)
 
 
 # foo = get_census_pdb_pop_density()
 # print(foo)
 # print(get_acs5_under_poverty(c, '42', '101', '000402', '2'))
-c = Census(utils.get_config_val('API Keys', 'census_api'), year=2017)
-get_station_characteristics(c)
+# c = Census(utils.get_config_val('API Keys', 'census_api'), year=2017)
+# get_station_characteristics(c)
