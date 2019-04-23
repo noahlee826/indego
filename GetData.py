@@ -48,7 +48,7 @@ def get_station_characteristics(census=None, include_station_ids=None):
     if census is None:
         census = Census(utils.get_config_val('API Keys', 'census_api'), year=2017)
 
-    blockgroup_densities = get_census_pdb_pop_density()
+    blockgroup_densities, blockgroup_poverties, blockgroup_incomes = get_census_pdb_pop_density_poverty_income()
     station_list = get_indego_station_info(include_station_ids)
 
     for station in station_list:
@@ -60,8 +60,7 @@ def get_station_characteristics(census=None, include_station_ids=None):
         county = block_info['County']['FIPS'][2:5]
         state = block_info['State']['FIPS']
 
-        blockgroup_full = block_info['Block']['FIPS'][
-                          :12]  # Need the first 11 digits to identify state, county, blockgroup
+        blockgroup_full = block_info['Block']['FIPS'][:12]  # Need the first 11 digits to identify state/county/blockgrp
 
         station['block_FIPS'] = block
         station['blockgroup_FIPS'] = blockgroup
@@ -69,7 +68,9 @@ def get_station_characteristics(census=None, include_station_ids=None):
         station['county_FIPS'] = county
         station['state_FIPS'] = state
         station['pop_density'] = blockgroup_densities[blockgroup_full]
-        station['pct_in_poverty'], station['med_income'] = get_acs5_data(census, state, county, tract, blockgroup)
+        # station['pct_in_poverty'], station['med_income'] = get_acs5_data(census, state, county, tract, blockgroup)
+        station['pct_in_poverty'] = blockgroup_poverties[blockgroup_full]
+        station['med_income'] = blockgroup_incomes[blockgroup_full]
         # print(station)
     print(station_list)
     return station_list
@@ -92,6 +93,36 @@ def get_census_pdb_pop_density():
     return blockgroups_densities
 
 
+# Returns a 3-tuple of the form ({blockgroup: population density),
+#                                {blockgroup: percent in poverty},
+#                                {blockgroup: median income})
+def get_census_pdb_pop_density_poverty_income():
+    # For help building this query:
+    # https://www.census.gov/data/developers/guidance/api-user-guide.Query_Examples.html
+    # Uses 2016 ACS estimate for population and area
+    api_url = 'https://api.census.gov/data/2018/pdb/blockgroup?get=County_name,State_name,Tot_Population_ACS_12_16,LAND_AREA,Prs_Blw_Pov_Lev_ACS_12_16,Pov_Univ_ACS_12_16,pct_Prs_Blw_Pov_Lev_ACS_12_16,Med_HHD_Inc_BG_ACS_12_16&for=block%20group:*&in=state:42%20county:101'
+    data = urllib.request.urlopen(api_url).read()
+    json_data = json.loads(data)
+    labels = json_data[0]
+
+    blockgroups_list = [dict(zip(labels, row)) for row in json_data[1:]]
+    blockgroups_densities = {bg['state'] + bg['county'] + bg['tract'] + bg['block group']:
+                             int(bg['Tot_Population_ACS_12_16']) / float(bg['LAND_AREA'])
+                             for bg in blockgroups_list}
+    blockgroups_poverties = {bg['state'] + bg['county'] + bg['tract'] + bg['block group']:
+                             int(bg['Prs_Blw_Pov_Lev_ACS_12_16']) / int(bg['Pov_Univ_ACS_12_16'])
+                                if int(bg['Pov_Univ_ACS_12_16']) != 0
+                                else 0
+                             for bg in blockgroups_list}
+    blockgroups_incomes = {bg['state'] + bg['county'] + bg['tract'] + bg['block group']:
+                           int(bg['Med_HHD_Inc_BG_ACS_12_16'].strip('$').replace(',', ''))  # Get rid of $ and , to convert to float
+                                if bg['Med_HHD_Inc_BG_ACS_12_16']  # Income string is empty
+                                else 0
+                           for bg in blockgroups_list}
+
+    return blockgroups_densities, blockgroups_poverties, blockgroups_incomes
+
+
 # returns tuple of (percent in poverty, median income)
 def get_acs5_data(census, state, county, tract, blockgroup):
     # TODO maybe hammer this out to only make one API call instead of one call per blockgroup
@@ -101,7 +132,10 @@ def get_acs5_data(census, state, county, tract, blockgroup):
 
     total_pop_field = 'B01003_001E'  # Estimate!!Total	TOTAL POPULATION
     num_poverty_field = 'B23024_002E'  # Estimate!!Total!!Income in the past 12 months below poverty level
+
+    # Careful! Next line returns a number of people (households?), who have income. Other _002 through _017 break it into ranges
     med_income_field = 'B19001_001E'  # Estimate!!Total	    HOUSEHOLD INCOME IN THE PAST 12 MONTHS (IN 2017 INFLATION-ADJUSTED DOLLARS)
+
     # B21004_001E # another possible median income
     bg_fields = (total_pop_field,
                  num_poverty_field)
@@ -173,21 +207,30 @@ def get_station_FIPS(census=None, include_station_ids=None):
 def get_zoning_data(include_station_ids=None):
     station_list = get_indego_station_info(include_station_ids)
     station_list_dds = [defaultdict(int, station) for station in station_list]
-    zoning_groups = set()
+    global_zoning_groups = set()
 
     for station in station_list_dds:
         lat = station['lat']
         lon = station['lon']
-        zoning_group = get_zoning_group(lat, lon)
-        station[zoning_group] = 1
-        zoning_groups.add(zoning_group)
+        radius = 75.0  # Most Philadelphia blocks are about 150m long, so search uses within half of a block
+        # radius = 400  # Use roughly 1/4 mile as that is how far most American will walk to an amenity
+                        # and the distance Indego uses to asses nearby population and jobs
+                        # qv page 6: http://www.phillyotis.com/wp-content/uploads/2018/10/2018_IndegoPlan_Full_Final.pdf
+        nearby_zoning_groups = get_nearby_zoning_groups(lat, lon, radius, use_zoning_code=False)
+        for zg in nearby_zoning_groups:
+            station[zg] = 1
+            global_zoning_groups.add(zg)
 
     for station in station_list_dds:
         print(station)
-    return station_list_dds, zoning_groups
+    return station_list_dds, sorted(global_zoning_groups)
+
 
 # Returns a string that is the zoning group of closest zoned plot
-def get_zoning_group(lat, lon):
+# Caveat: breaks up "Special Purpose" zoning group into its specific zones
+# See zoning quick reference guide:
+# https://www.phila.gov/CityPlanning/resources/Publications/Philadelphia%20Zoning%20Code_Quick%20Reference%20Manual.pdf
+def get_nearest_zoning_group(lat, lon):
     # Returns properties whose footprints are entirely within 500m of pt
     # query = str('https://services.arcgis.com/fLeGjb7u4uXqeF9q/arcgis/rest/services/Zoning_BaseDistricts/FeatureServer/0/query?where=1%3D1&objectIds=&time=&geometry=%7B"x"+%3A+{0}%2C+"y"+%3A+{1}%2C+"spatialReference"%3A%7B"wkid"+%3A+4326%7D%7D&geometryType=esriGeometryPoint&inSR=&spatialRel=esriSpatialRelContains&resultType=none&distance=500.0&units=esriSRUnit_Meter&returnGeodetic=false&outFields=*&returnGeometry=true&returnCentroid=false&multipatchOption=xyFootprint&maxAllowableOffset=&geometryPrecision=&f=pjson&token=')\
     # for obj in zgroup_data['features']:
@@ -216,19 +259,34 @@ def get_zoning_group(lat, lon):
 
     # Use the first feature, typically the closest if there's more than one
     zoning_group = json_data['features'][0]['attributes']['ZONINGGROUP']
+
+    # Further specify SP zoning group
+    if zoning_group == 'Special Purpose':
+        zoning_group = json_data['features'][0]['attributes']['CODE']
     return zoning_group
 
 
 # radius units are meters
+# if use_zoning_Code == True, analysis will use the more-specific zoning code instead of general use categories
 # Returns set of zoning groups that appear within radius meters of (lat, lon)
-def get_nearby_zoning_group(lat, lon, radius=0.0):
+# Caveat: breaks up "Special Purpose" zoning group into its specific zones
+# See zoning quick reference guide:
+# https://www.phila.gov/CityPlanning/resources/Publications/Philadelphia%20Zoning%20Code_Quick%20Reference%20Manual.pdf
+def get_nearby_zoning_groups(lat, lon, radius=0.0, use_zoning_code=False, split_special_purpose=True):
+    zoning_type = 'CODE' if use_zoning_code else 'ZONINGGROUP'
     query = str(
         'https://services.arcgis.com/fLeGjb7u4uXqeF9q/arcgis/rest/services/Zoning_BaseDistricts/FeatureServer/0/query?where=1%3D1&objectIds=&time=&geometry=%7B"x"+%3A+{0}%2C+"y"+%3A+{1}%2C+"spatialReference"%3A%7B"wkid"+%3A+4326%7D%7D&geometryType=esriGeometryPoint&inSR=&spatialRel=esriSpatialRelIntersects&resultType=none&distance={2}&units=esriSRUnit_Meter&returnGeodetic=false&outFields=*&returnGeometry=true&returnCentroid=false&multipatchOption=xyFootprint&maxAllowableOffset=&geometryPrecision=&outSR=&datumTransformation=&applyVCSProjection=false&returnIdsOnly=false&returnUniqueIdsOnly=false&returnCountOnly=false&returnExtentOnly=false&returnQueryGeometry=false&returnDistinctValues=false&orderByFields=&groupByFieldsForStatistics=&outStatistics=&having=&resultOffset=&resultRecordCount=&returnZ=false&returnM=false&returnExceededLimitFeatures=true&quantizationParameters=&sqlFormat=none&f=pjson&token=') \
-        .format(lon, lat, str(radius))  # The API is in (x, y) format, which is {lon, lat)
+        .format(lon, lat, str(radius))  # The API takes coords in (x, y) format, which is (lon, lat)
     print(query)
     data = urllib.request.urlopen(query).read()
     json_data = json.loads(data)
-    zoning_groups = set([plot['attributes']['ZONINGGROUP'] for plot in json_data['features']])
+    zoning_groups = set()
+    for plot in json_data['features']:
+        zoning = plot['attributes'][zoning_type]
+        if zoning == 'Special Purpose':  # Use specific zoning code (SPINS, SPENT, etc.) instead of 'Special Purpose'
+            zoning = plot['attributes']['CODE']
+        zoning_groups.add(zoning)
+    # zoning_groups = set([plot['attributes'][attrib] for plot in json_data['features']])
     return zoning_groups
 
 

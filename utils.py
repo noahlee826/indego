@@ -13,3 +13,9 @@ def get_config_val(section, key):
     config = configparser.ConfigParser()
     config.read('config.ini')
     return config[section][key]
+
+
+def print_hline(length=60):
+    print()
+    print('-' * length)
+    print()
