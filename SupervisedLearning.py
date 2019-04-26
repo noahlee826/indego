@@ -2,11 +2,12 @@ import ReadData as rd, GetData as gd
 import numpy as np
 from sklearn import linear_model, metrics
 from sklearn import svm, datasets
-from sklearn.metrics import roc_curve, auc
+from sklearn.metrics import confusion_matrix, f1_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.multiclass import OneVsRestClassifier
-from scipy import interp
+from collections import defaultdict
+import random
 import utils
 
 import matplotlib.pyplot as plt
@@ -89,15 +90,6 @@ scaled_continuous_data = scaler.fit_transform(continuous_data)
 
 scaled_data = np.concatenate((binary_data, scaled_continuous_data), axis=1)
 
-X_train, X_test, y_train, y_test = train_test_split(scaled_data, targets, test_size=0.2)
-print('Example rows from X_train:')
-print(X_train[0])
-print(X_train[1])
-print(X_train[2])
-print(X_train[3])
-print()
-print('Bias in y_train:', sum(y_train), 'of', len(y_train), '(', float(sum(y_train) / len(y_train)), '%)')
-print('Bias in y_test :', sum(y_test), 'of', len(y_test), '(', float(sum(y_test) / len(y_test)), '%)')
 
 
 # regr = linear_model.LinearRegression()
@@ -108,52 +100,110 @@ print('Bias in y_test :', sum(y_test), 'of', len(y_test), '(', float(sum(y_test)
 # print(regr.coef_)
 # print(regr.score(X_test, y_test))
 
-# clf = linear_model.LogisticRegression(solver='lbfgs', class_weight='balanced')
-clf = linear_model.LogisticRegressionCV(solver='lbfgs', class_weight='balanced', n_jobs=-2, cv=5) # Cross-Validation model
-clf.fit(X_train, y_train)
-expected = y_test
+solvers = ['lbfgs', 'liblinear']
+num_trials = 10
 
-predicted = clf.predict(X_test)
+confusion_matrices = defaultdict(list)
+f1_scores = defaultdict(list)
+coefficients = defaultdict(list)
 
-classifier = OneVsRestClassifier(svm.SVC(kernel='linear', probability=True))
-y_score = classifier.fit(X_train, y_train).decision_function(X_test)
+features = [zg for zg in zoning_groups] + [CHAR_1, CHAR_2, CHAR_3]
 
-fpr, tpr, threshhold = roc_curve(y_test, y_score)
-roc_auc = auc(fpr, tpr)
+for solver in solvers:
+    print(solver)
+
+    for i in range(num_trials):
+        X_train, X_test, y_train, y_test = train_test_split(scaled_data, targets, test_size=0.2)
+        print('Bias in y_train:', sum(y_train), 'of', len(y_train), '(', float(sum(y_train) / len(y_train)), '%)')
+        print('Bias in y_test :', sum(y_test), 'of', len(y_test), '(', float(sum(y_test) / len(y_test)), '%)')
+        # print('Example rows from X_train:')
+        # print(X_train[0])
+        # print(X_train[1])
+        # print(X_train[2])
+        # print(X_train[3])
+        # print()
+
+        # Cross-Validation model
+        clf = linear_model.LogisticRegressionCV(solver=solver, class_weight='balanced',
+                                                n_jobs=-2, cv=5)
+        clf.fit(X_train, y_train)
+        expected = y_test
+
+        predicted = clf.predict(X_test)
+
+        classifier = OneVsRestClassifier(svm.SVC(kernel='linear', probability=True))
+        y_score = classifier.fit(X_train, y_train).decision_function(X_test)
+
+        confusion_matrices[solver] += [confusion_matrix(expected, predicted)]
+        f1_scores[solver] += [f1_score(expected, predicted)]
+        coefficients[solver] += [dict(zip(features, clf.coef_.tolist()[0]))]
+
+        # fpr, tpr, threshhold = roc_curve(y_test, y_score)
+        # roc_auc = auc(fpr, tpr)
+
+        utils.print_hline()
+
+        print('vvv Expected vvv')
+        print(expected)
+        print(predicted)
+        print('^^^ Predicted ^^^')
+
+        utils.print_hline()
+
+        # print([zg for zg in zoning_groups] + [CHAR_1, CHAR_2, CHAR_3])
+        # print(clf.coef_.tolist())
+        coef_labels = zip(clf.coef_.tolist()[0], features)
+        # coef_labels = zip(clf.coef_.tolist()[0], [zg for zg in zoning_groups] + [CHAR_1, CHAR_3])
+        for label, coef in sorted(coef_labels, key=lambda x: abs(x[0]), reverse=True):
+            print('{0:20}  {1}'.format(coef, label))
+
+        utils.print_hline()
+
+        print("Classification report for classifier %s:\n%s\n"
+              % (clf, metrics.classification_report(expected, predicted)))
+        print("Confusion matrix:\n%s" % metrics.confusion_matrix(expected, predicted))
+
+        utils.print_hline()
+
+# plt.figure()
+# lw = 2
+# plt.plot(fpr, tpr, color='darkorange',
+#          lw=lw, label='ROC curve (area = %0.2f)' % roc_auc)
+# plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
+# plt.xlim([0.0, 1.0])
+# plt.ylim([0.0, 1.05])
+# plt.xlabel('False Positive Rate')
+# plt.ylabel('True Positive Rate')
+# plt.title('Receiver operating characteristic example')
+# plt.legend(loc="lower right")
+# plt.show()
 
 utils.print_hline()
-
-print('vvv Expected vvv')
-print(expected)
-print(predicted)
-print('^^^ Predicted ^^^')
-
+utils.print_hline()
 utils.print_hline()
 
-# print([zg for zg in zoning_groups] + [CHAR_1, CHAR_2, CHAR_3])
-# print(clf.coef_.tolist())
-coef_labels = zip(clf.coef_.tolist()[0], [zg for zg in zoning_groups] + [CHAR_1, CHAR_2, CHAR_3])
-# coef_labels = zip(clf.coef_.tolist()[0], [zg for zg in zoning_groups] + [CHAR_1, CHAR_3])
-for coef, label in sorted(coef_labels, key=lambda x: abs(x[0]), reverse=True):
-    print('{0:20}  {1}'.format(coef, label))
+for solver in solvers:
+    print(solver)
+    print('Confusion Matrices:')
+    for c_matrix in confusion_matrices[solver]:
+        print(c_matrix)
 
-utils.print_hline()
+    print()
+    print('F1 Scores:')
+    for f1_score in f1_scores[solver]:
+        print(f1_score)
+    print('Mean F1 score:\t', np.mean(f1_scores[solver]))
 
-print("Classification report for classifier %s:\n%s\n"
-      % (clf, metrics.classification_report(expected, predicted)))
-print("Confusion matrix:\n%s" % metrics.confusion_matrix(expected, predicted))
-
-utils.print_hline()
-
-plt.figure()
-lw = 2
-plt.plot(fpr, tpr, color='darkorange',
-         lw=lw, label='ROC curve (area = %0.2f)' % roc_auc)
-plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
-plt.xlim([0.0, 1.0])
-plt.ylim([0.0, 1.05])
-plt.xlabel('False Positive Rate')
-plt.ylabel('True Positive Rate')
-plt.title('Receiver operating characteristic example')
-plt.legend(loc="lower right")
-plt.show()
+    print()
+    print('Coefficients:')
+    for coeffs in coefficients[solver]:
+        for label, coef in sorted(coeffs.items(), key=utils.abs_idx1, reverse=True):
+            print('{0:30}  {1}'.format(coef, label))
+    print('Coefficient Averages:')
+    avg_coeffs = {}
+    for feature in features:
+        cs = [coeffs[feature] for coeffs in coefficients[solver]]
+        avg_coeffs[feature] = np.mean(cs)
+    for item in sorted(avg_coeffs.items(), key=utils.abs_idx1, reverse=True):
+        print(item)
+    utils.print_hline()

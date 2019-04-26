@@ -14,7 +14,7 @@ STATIONS_CSV_PATH = 'data/indego-stations-2018-10-19-with-labels.csv'
 VIRTUAL_STATION_STATION_ID = '3000'
 EXCLUDE_STATION_IDS = [VIRTUAL_STATION_STATION_ID]
 
-FIG_FOLDER_PATH = "C:/Users/Noah/Google Drive/@@_SuperSenior/Plots/picdump/"
+FIG_FOLDER_PATH = "C:/Users/Noah/Google Drive/@@_SuperSenior/Plots/picdump2/"
 FIG_FORMAT = 'png'
 
 # Peak hours as defined by SEPTA's bike-on-subway policy: http://www.septa.org/policy/bike.html
@@ -116,56 +116,56 @@ bucket_texts = all_total_buckets.keys()
 
 # For each station, find the deviance from the mean
 # and save the plot in FIG_FOLDER_PATH
-for stn_id, counts_by_station in counts_by_stations.items():
-    # print('Working on station', station['Station ID'], station['Station Name'])
-    # print('Working on station', stn_id, station_names[stn_id])
-
-    # stn_id = station['Station ID']
-
-    # buckets = counts_by_stations[stn_id][0] # 0 = trip starts, 1 = trip ends, 2 = total
-    buckets = counts_by_station[0]  # 0 = trip starts, 1 = trip ends, 2 = total
-
-    # print(buckets)
-
-    actual_counts = [list(abs_rel_tuple) for abs_rel_tuple in zip(*buckets.values())]
-    overall_counts = [list(abs_rel_tuple) for abs_rel_tuple in zip(*all_total_buckets.values())]
-
-    # Calculate difference for absolute counts
-    actual_absolute_counts = actual_counts[0]
-    overall_absolute_counts = overall_counts[0]
-    # Need to prorate the overall absolute counts down to what we'd expect those counts to be based on this station's
-    # portion of the overall total rides
-    total_for_this_stn = sum(actual_absolute_counts)
-    stn_percent = total_for_this_stn / total_for_all_stns
-    expected_absolute_counts = [stn_percent * absolute for absolute in overall_absolute_counts]
-    absolute_diffs = [actual - expected for actual, expected in zip(actual_absolute_counts, expected_absolute_counts)]
-
-    # Calculate difference for relative counts
-    actual_relative_counts = actual_counts[1]
-    # Relative counts don't need "scaling down", since they're already relative
-    expected_relative_counts = overall_counts[1]
-    relative_diffs = [actual - expected for actual, expected in zip(actual_relative_counts, expected_relative_counts)]
-
-    stn_total_buckets = dict(zip(bucket_texts, list(zip(absolute_diffs, relative_diffs))))
-
-    use_relative = True
-
-    plt.figure(figsize=(10, 3))
-    rd.plot_bucketed_count(stn_total_buckets, use_relative_count=use_relative)
-    clean_stn_name = station_names[stn_id].replace('"', '')
-    plt.title(clean_stn_name)
-    path = FIG_FOLDER_PATH + stn_id + ' ' + clean_stn_name + '.' + FIG_FORMAT
-    plt.xlabel('Time of Day')
-    plt.ylabel('Portion of Avg Daily Trips')
-    if use_relative:
-        plt.ylim([-0.06, 0.08])
-        plt.yticks(np.arange(-0.06, 0.08, 0.01))
-    plt.grid(True, axis='y', which='both')
-    plt.tight_layout()
-    # plt.show()
-    # print('Saving plot to:', path)
-    plt.savefig(path, format=FIG_FORMAT)
-    plt.close()
+# for stn_id, counts_by_station in counts_by_stations.items():
+#     # print('Working on station', station['Station ID'], station['Station Name'])
+#     # print('Working on station', stn_id, station_names[stn_id])
+#
+#     # stn_id = station['Station ID']
+#
+#     # buckets = counts_by_stations[stn_id][0] # 0 = trip starts, 1 = trip ends, 2 = total
+#     buckets = counts_by_station[0]  # 0 = trip starts, 1 = trip ends, 2 = total
+#
+#     # print(buckets)
+#
+#     actual_counts = [list(abs_rel_tuple) for abs_rel_tuple in zip(*buckets.values())]
+#     overall_counts = [list(abs_rel_tuple) for abs_rel_tuple in zip(*all_total_buckets.values())]
+#
+#     # Calculate difference for absolute counts
+#     actual_absolute_counts = actual_counts[0]
+#     overall_absolute_counts = overall_counts[0]
+#     # Need to prorate the overall absolute counts down to what we'd expect those counts to be based on this station's
+#     # portion of the overall total rides
+#     total_for_this_stn = sum(actual_absolute_counts)
+#     stn_percent = total_for_this_stn / total_for_all_stns
+#     expected_absolute_counts = [stn_percent * absolute for absolute in overall_absolute_counts]
+#     absolute_diffs = [actual - expected for actual, expected in zip(actual_absolute_counts, expected_absolute_counts)]
+#
+#     # Calculate difference for relative counts
+#     actual_relative_counts = actual_counts[1]
+#     # Relative counts don't need "scaling down", since they're already relative
+#     expected_relative_counts = overall_counts[1]
+#     relative_diffs = [actual - expected for actual, expected in zip(actual_relative_counts, expected_relative_counts)]
+#
+#     stn_total_buckets = dict(zip(bucket_texts, list(zip(absolute_diffs, relative_diffs))))
+#
+#     use_relative = True
+#
+#     plt.figure(figsize=(10, 3))
+#     rd.plot_bucketed_count(stn_total_buckets, use_relative_count=use_relative)
+#     clean_stn_name = station_names[stn_id].replace('"', '')
+#     plt.title(clean_stn_name)
+#     path = FIG_FOLDER_PATH + stn_id + ' ' + clean_stn_name + '.' + FIG_FORMAT
+#     plt.xlabel('Time of Day')
+#     plt.ylabel('Difference from Consensus')
+#     if use_relative:
+#         plt.ylim([-0.06, 0.08])
+#         plt.yticks(np.arange(-0.06, 0.08, 0.01))
+#     plt.grid(True, axis='y', which='both')
+#     plt.tight_layout()
+#     # plt.show()
+#     # print('Saving plot to:', path)
+#     plt.savefig(path, format=FIG_FORMAT)
+#     plt.close()
 
 ########################################
 # MSE Analysis
@@ -210,6 +210,13 @@ for stn_id, counts_by_station in counts_by_stations.items():
 # Total bucket plot
 plt.figure(figsize=(10, 2))
 rd.plot_bucketed_count(all_total_buckets, use_relative_count=True)
+path = FIG_FOLDER_PATH + '0000' + ' ' + 'Consensus' + '.' + FIG_FORMAT
+plt.xlabel('Time of Day')
+plt.ylabel('Portion of Avg Daily Trips')
+plt.grid(True, axis='y', which='both')
+plt.tight_layout()
+plt.savefig(path, format=FIG_FORMAT, bbox_inches='tight')
+
 plt.show()
 
 ######################################################################
