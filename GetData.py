@@ -204,7 +204,7 @@ def get_station_FIPS(census=None, include_station_ids=None):
     return station_list
 
 
-def get_zoning_data(include_station_ids=None):
+def get_zoning_data(include_station_ids=None, use_zoning_code=False):
     station_list = get_indego_station_info(include_station_ids)
     station_list_dds = [defaultdict(int, station) for station in station_list]
     global_zoning_groups = set()
@@ -216,7 +216,7 @@ def get_zoning_data(include_station_ids=None):
         # radius = 400  # Use roughly 1/4 mile as that is how far most American will walk to an amenity
                         # and the distance Indego uses to asses nearby population and jobs
                         # qv page 6: http://www.phillyotis.com/wp-content/uploads/2018/10/2018_IndegoPlan_Full_Final.pdf
-        nearby_zoning_groups = get_nearby_zoning_groups(lat, lon, radius, use_zoning_code=False)
+        nearby_zoning_groups = get_nearby_zoning_groups(lat, lon, radius, use_zoning_code=use_zoning_code)
         for zg in nearby_zoning_groups:
             station[zg] = 1
             global_zoning_groups.add(zg)
